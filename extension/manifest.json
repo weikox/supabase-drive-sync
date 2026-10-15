@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Facturas Curenergía",
+  "version": "1.0.0",
+  "description": "Envía tus facturas de luz y gas de Curenergía a tu app.",
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": ["https://www.curenergia.es/*", "https://*.lovable.app/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "action": { "default_popup": "popup.html", "default_title": "Facturas Curenergía" },
+  "background": { "service_worker": "background.js" }
+}

@@ -1,0 +1,179 @@
+import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+
+const BASE = "https://www.curenergia.es/webcli";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0";
+
+type Sess = { auth_token: string; cookie: string };
+
+function headers(s: Sess): Record<string, string> {
+  return {
+    accept: "application/json, text/plain, */*",
+    "accept-language": "es,es-ES;q=0.9,en;q=0.8",
+    "auth-token": s.auth_token,
+    "content-type": "application/json;charset=UTF-8",
+    cookie: s.cookie,
+    origin: "https://www.curenergia.es",
+    referer: "https://www.curenergia.es/wclifrmr/cur/gestiones/facturas/historico-facturas",
+    "sec-ch-ua": '"Microsoft Edge";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": UA,
+  };
+}
+
+async function call(s: Sess, path: string, init: RequestInit = {}): Promise<any> {
+  const res = await fetch(`${BASE}${path}`, { ...init, headers: headers(s) });
+  const text = await res.text();
+  if (!res.ok || text.trim().startsWith("<")) {
+    throw new Error(
+      res.status === 403 || res.status === 401 || text.includes("Access Denied")
+        ? "La sesión de Curenergía ha caducado. Pega una petición nueva."
+        : `Curenergía respondió HTTP ${res.status}`,
+    );
+  }
+  return JSON.parse(text);
+}
+
+/** Extrae auth-token y cookies de un "Copiar como cURL" (bash o cmd). */
+export function parseCurl(raw: string): Sess {
+  const t = raw.replace(/\r/g, "").replace(/\^/g, "");
+  const token = t.match(/auth-token:\s*([^'"\n]+)/i)?.[1]?.trim();
+  const cookie =
+    t.match(/-b\s+'([^']+)'/)?.[1] ??
+    t.match(/-b\s+"([^"]+)"/)?.[1] ??
+    t.match(/cookie:\s*([^'"\n]+)/i)?.[1];
+  if (!token || !cookie) throw new Error("No encuentro auth-token y cookies en el texto pegado");
+  return { auth_token: token, cookie: cookie.trim() };
+}
+
+async function getSession(supabase: any, userId: string): Promise<Sess> {
+  const { data } = await supabase
+    .from("curenergia_sessions").select("auth_token, cookie").eq("user_id", userId).maybeSingle();
+  if (!data) throw new Error("Primero pega una petición de Curenergía (botón «Conectar sesión»)");
+  return data;
+}
+
+function toNum(s: string | undefined): number | null {
+  if (!s) return null;
+  const n = Number(s.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+export const saveCurenergiaSession = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { curl: string }) => d)
+  .handler(async ({ data, context }) => {
+    const s = parseCurl(data.curl);
+    const { error } = await context.supabase
+      .from("curenergia_sessions")
+      .upsert({ user_id: context.userId, ...s, updated_at: new Date().toISOString() });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const syncCurenergiaInvoices = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<{ count: number; error?: string }> => {
+    try { return await doSync(context.supabase, context.userId); }
+    catch (e: any) { return { count: 0, error: friendly(e) }; }
+  });
+
+function friendly(e: any): string {
+  const m = String(e?.message ?? e);
+  return m.includes("HTTP 418") || m.includes("HTTP 403")
+    ? "Curenergía ha bloqueado la conexión automática desde el servidor (antirobots)."
+    : m;
+}
+
+async function doSync(supabase: any, userId: string) {
+  {
+    const s = await getSession(supabase, userId);
+    let contracts: any[] = [];
+    try {
+      const profile = await call(s, "/usuario/data?codRs=12908457&origenLogin=19");
+      contracts = profile.listaContratosTotal ?? [];
+    } catch (e: any) { if (String(e?.message).includes("HTTP 418")) throw e; }
+    if (!contracts.length) contracts = [
+      { codRecepSum: "12908457", codLineaPdt: "ELE" },
+      { codRecepSum: "18791643", codLineaPdt: "GAS" },
+    ];
+    let count = 0;
+    for (const c of contracts) {
+      const supply = String(c.codLineaPdt ?? c.descLineaPdt ?? "").toUpperCase().includes("GAS") ? "gas" : "luz";
+      await call(s, `/usuario/data?codRs=${c.codRecepSum}&origenLogin=19`);
+      const list = await call(s, "/nm/facturas/lista?language=es", { method: "POST" });
+      const rows = (list.facturas ?? []).map((f: any) => ({
+        user_id: userId,
+        supply,
+        contract_id: String(f.codContrato ?? c.codContrato),
+        invoice_id: f.factura,
+        invoice_num: f.numFacturaIva || null,
+        issued_date: f.fecha || null,
+        period_from: f.fecMinTerEne || null,
+        period_to: f.fecMaxTerEne || null,
+        amount: typeof f.importeOrdenacion === "number" ? f.importeOrdenacion : toNum(f.importe),
+        consumption: f.consumo || null,
+        status: f.descEstado || null,
+      }));
+      if (rows.length) {
+        const { error } = await supabase.from("curenergia_invoices").upsert(rows, { onConflict: "user_id,invoice_id" });
+        if (error) throw new Error(error.message);
+      }
+      count += rows.length;
+    }
+    return { count };
+  }
+}
+
+export const downloadCurenergiaInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { id: string }) => d)
+  .handler(async ({ data, context }): Promise<{ url?: string; error?: string }> => {
+    try { return await doDownload(context.supabase, context.userId, data.id); }
+    catch (e: any) { return { error: friendly(e) }; }
+  });
+
+async function doDownload(supabase: any, userId: string, id: string) {
+  {
+    const data = { id };
+    const { data: inv, error } = await supabase
+      .from("curenergia_invoices").select("*").eq("id", data.id).single();
+    if (error || !inv) throw new Error("Factura no encontrada");
+    const s = await getSession(supabase, userId);
+    const res = await call(s, "/nm/facturas/descarga?language=es", {
+      method: "POST",
+      body: JSON.stringify({ numFactura: inv.invoice_id }),
+    });
+    if (!res.fichero) throw new Error("Curenergía no devolvió el PDF");
+    const bin = Uint8Array.from(atob(res.fichero), (ch) => ch.charCodeAt(0));
+    const path = `${userId}/curenergia/${inv.supply}/${(inv.invoice_num ?? inv.invoice_id).replace(/[^\w.-]/g, "_")}.pdf`;
+    const { error: e2 } = await supabase.storage
+      .from("invoices").upload(path, bin, { contentType: "application/pdf", upsert: true });
+    if (e2) throw new Error(e2.message);
+    await supabase.from("curenergia_invoices").update({ pdf_storage_path: path }).eq("id", inv.id);
+    const { data: signed, error: e3 } = await supabase.storage.from("invoices").createSignedUrl(path, 600);
+    if (e3 || !signed) throw new Error(e3?.message ?? "No se pudo firmar la URL");
+    return { url: signed.signedUrl };
+  }
+}
+
+/** Crea (o renueva) el código secreto que usa el botón de marcadores. */
+export const getCurenergiaImportToken = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data } = await context.supabase
+      .from("curenergia_sessions").select("auth_token, cookie").eq("user_id", context.userId).maybeSingle();
+    if (data?.cookie === "bookmarklet") return { token: data.auth_token as string };
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const { error } = await context.supabase.from("curenergia_sessions").upsert({
+      user_id: context.userId, auth_token: token, cookie: "bookmarklet", updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(error.message);
+    return { token };
+  });
