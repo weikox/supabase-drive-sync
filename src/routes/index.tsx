@@ -13,6 +13,7 @@ import { syncInimaInvoices, downloadInimaInvoice } from "@/utils/inima.functions
 import { syncDigiInvoices, verifyDigiCode, resendDigiCode, downloadDigiInvoice } from "@/utils/digi.functions";
 import { Input } from "@/components/ui/input";
 import { CurenergiaPanel } from "@/components/CurenergiaPanel";
+import { PrestoParkingPanel } from "@/components/PrestoParkingPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
