@@ -103,12 +103,14 @@ function Dashboard() {
           <TabsTrigger value="inima">Inima Water</TabsTrigger>
           <TabsTrigger value="digi">Digi</TabsTrigger>
           <TabsTrigger value="curenergia">Curenergía</TabsTrigger>
+          <TabsTrigger value="prestoparking">PrestoParking</TabsTrigger>
         </TabsList>
         <TabsContent value="naturgy"><NaturgyPanel /></TabsContent>
         <TabsContent value="gomez"><GomezPanel /></TabsContent>
         <TabsContent value="inima"><InimaPanel /></TabsContent>
         <TabsContent value="digi"><DigiPanel /></TabsContent>
         <TabsContent value="curenergia"><CurenergiaPanel /></TabsContent>
+        <TabsContent value="prestoparking"><PrestoParkingPanel /></TabsContent>
       </Tabs>
     </div>
   );
