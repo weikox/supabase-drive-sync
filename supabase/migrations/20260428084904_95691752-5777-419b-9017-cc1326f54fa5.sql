@@ -1,0 +1,1 @@
+ALTER TABLE public.invoice_runs ADD COLUMN IF NOT EXISTS captured_texts jsonb;
