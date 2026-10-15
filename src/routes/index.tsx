@@ -13,6 +13,7 @@ import { syncInimaInvoices, downloadInimaInvoice } from "@/utils/inima.functions
 import { syncDigiInvoices, verifyDigiCode, resendDigiCode, downloadDigiInvoice } from "@/utils/digi.functions";
 import { Input } from "@/components/ui/input";
 import { CurenergiaPanel } from "@/components/CurenergiaPanel";
+import { PrestoParkingPanel } from "@/components/PrestoParkingPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,12 +103,14 @@ function Dashboard() {
           <TabsTrigger value="inima">Inima Water</TabsTrigger>
           <TabsTrigger value="digi">Digi</TabsTrigger>
           <TabsTrigger value="curenergia">Curenergía</TabsTrigger>
+          <TabsTrigger value="prestoparking">PrestoParking</TabsTrigger>
         </TabsList>
         <TabsContent value="naturgy"><NaturgyPanel /></TabsContent>
         <TabsContent value="gomez"><GomezPanel /></TabsContent>
         <TabsContent value="inima"><InimaPanel /></TabsContent>
         <TabsContent value="digi"><DigiPanel /></TabsContent>
         <TabsContent value="curenergia"><CurenergiaPanel /></TabsContent>
+        <TabsContent value="prestoparking"><PrestoParkingPanel /></TabsContent>
       </Tabs>
     </div>
   );
