@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { withAppSecrets } from "./app-secrets";
 
 const API = "https://midigi-backend-es.digimobil.es/v2";
 const ORIGIN = "https://midigi.digimobil.es";
@@ -182,7 +183,7 @@ async function doSync(ctx: Ctx, token: string, cookie: string | null, uuid: stri
 }
 
 export const syncDigiInvoices = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .handler(async ({ context }) => {
     const ctx = context as unknown as Ctx;
     try {
@@ -196,7 +197,7 @@ export const syncDigiInvoices = createServerFn({ method: "POST" })
   });
 
 export const verifyDigiCode = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { code: string }) => {
     if (!data?.code || !/^\w{3,10}$/.test(data.code.trim())) throw new Error("Código no válido");
     return { code: data.code.trim() };
@@ -228,7 +229,7 @@ export const verifyDigiCode = createServerFn({ method: "POST" })
   });
 
 export const resendDigiCode = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .handler(async () => {
     const res = await fetch(`${API}/forward2FACode`, {
       method: "POST",
@@ -239,7 +240,7 @@ export const resendDigiCode = createServerFn({ method: "POST" })
   });
 
 export const downloadDigiInvoice = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { id: string }) => {
     if (!data?.id) throw new Error("id requerido");
     return data;

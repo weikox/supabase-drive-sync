@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { withAppSecrets } from "./app-secrets";
 
 const BASE = "https://oficinavirtual.inimawater.es";
 const UA =
@@ -68,7 +69,7 @@ function parseInvoices(html: string, contract: string) {
 }
 
 export const syncInimaInvoices = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     const cookie = await inimaLogin();
@@ -96,7 +97,7 @@ export const syncInimaInvoices = createServerFn({ method: "POST" })
   });
 
 export const downloadInimaInvoice = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { id: string }) => {
     if (!data?.id) throw new Error("id requerido");
     return data;
