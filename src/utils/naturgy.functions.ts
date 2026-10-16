@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { withAppSecrets } from "./app-secrets";
 
 const COGNITO_URL = "https://cognito-idp.eu-west-1.amazonaws.com/";
 const COGNITO_CLIENT_ID = "544rp4im2pvqsbtpcdejmc75ml";
@@ -128,7 +129,7 @@ async function fetchInvoicePdf(
 
 /** Sincroniza la lista de facturas: hace login + GET /invoices + upsert en BD. */
 export const syncNaturgyInvoices = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     const { nif, tokens } = await cognitoLogin();
@@ -162,7 +163,7 @@ export const syncNaturgyInvoices = createServerFn({ method: "POST" })
 
 /** Descarga una factura concreta, la sube a Storage y guarda la ruta. */
 export const downloadNaturgyInvoice = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { id: string }) => {
     if (!data?.id) throw new Error("id requerido");
     return data;
@@ -203,7 +204,7 @@ export const downloadNaturgyInvoice = createServerFn({ method: "POST" })
 
 /** Genera una URL firmada para un PDF ya descargado. */
 export const getNaturgyInvoiceUrl = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { path: string }) => {
     if (!data?.path) throw new Error("path requerido");
     return data;

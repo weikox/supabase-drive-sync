@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { withAppSecrets } from "./app-secrets";
 
 const BASE = "https://ov.gomezgroupmetering.com";
 const UA =
@@ -64,7 +65,7 @@ function parseReceipts(html: string) {
 }
 
 export const syncGomezInvoices = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     const { html } = await gomezLogin();
@@ -79,7 +80,7 @@ export const syncGomezInvoices = createServerFn({ method: "POST" })
   });
 
 export const downloadGomezInvoice = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { id: string }) => {
     if (!data?.id) throw new Error("id requerido");
     return data;

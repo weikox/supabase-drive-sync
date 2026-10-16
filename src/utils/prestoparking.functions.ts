@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { withAppSecrets } from "./app-secrets";
 
 const BASE = "https://secure.prestoparking.com/mobipayparking/";
 
@@ -20,7 +21,7 @@ async function prestoLogin(): Promise<string> {
 const toIso = (s: unknown) => (typeof s === "number" && s > 0 ? new Date(s * 1000).toISOString() : null);
 
 export const syncPrestoTickets = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     const cookie = await prestoLogin();
@@ -55,7 +56,7 @@ export const syncPrestoTickets = createServerFn({ method: "POST" })
   });
 
 export const downloadPrestoTicket = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
+  .middleware([withAppSecrets])
   .inputValidator((data: { id: string }) => {
     if (!data?.id) throw new Error("id requerido");
     return data;
