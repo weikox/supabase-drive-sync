@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, RefreshCw, Download, DownloadCloud, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, RefreshCw, Download, DownloadCloud, ChevronDown, ChevronRight, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 
 type Item = { description: string; numberUnits: number; netAmount: number };
@@ -93,6 +93,25 @@ export function CarrefourPanel() {
     toast[fail === 0 ? "success" : "warning"](`Descargados ${ok} · ${fail} fallidos`);
   }
 
+  function handleCsv() {
+    const q = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const n = (v: any) => (v == null || v === "" ? "" : String(Number(v).toFixed(2)).replace(".", ","));
+    const lines = [["Fecha", "Hora", "Tienda", "Ticket", "Producto", "Unidades", "Importe", "Total ticket"].join(";")];
+    for (const r of rows) {
+      const d = r.purchase_date ? new Date(r.purchase_date) : null;
+      const day = d ? d.toLocaleDateString("es-ES") : "", hour = d ? d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "";
+      const its = r.items?.length ? r.items : [null];
+      for (const it of its) lines.push([q(day), q(hour), q(r.store), q(r.ticket_id), q(it?.description ?? ""),
+        it ? String(it.numberUnits ?? "").replace(".", ",") : "", it ? n(it.netAmount) : "", n(r.amount)].join(";"));
+    }
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `carrefour_consumo_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    const sin = rows.filter((r) => !r.items?.length).length;
+    if (sin) toast.info(`${sin} compras sin desglose: pulsa "Sincronizar lista" para completarlas`);
+  }
+
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const downloaded = rows.filter((r) => r.pdf_storage_path).length;
 
@@ -103,7 +122,10 @@ export function CarrefourPanel() {
           <h2 className="text-2xl font-bold tracking-tight">Tickets Carrefour</h2>
           <p className="text-muted-foreground mt-1">Tus compras en tienda con el Club Carrefour.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={handleCsv} disabled={rows.length === 0}>
+            <FileSpreadsheet className="h-4 w-4 mr-2" /> Exportar datos (Excel)
+          </Button>
           <Button variant="outline" onClick={handleSync} disabled={syncing || bulk}>
             {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
             Sincronizar lista

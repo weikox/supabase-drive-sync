@@ -3,6 +3,38 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 const API = "https://pro.api.carrefour.es";
 
+/** Builds a receipt-style PDF from stored ticket data (fallback when Carrefour no longer keeps the PDF). */
+async function buildTicketPdf(r: any): Promise<Uint8Array> {
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+  const items: any[] = Array.isArray(r.items) ? r.items : [];
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Courier);
+  const bold = await doc.embedFont(StandardFonts.CourierBold);
+  const W = 260, lh = 12, H = Math.max(400, 200 + items.length * lh * 2);
+  const page = doc.addPage([W, H]);
+  // WinAnsi-safe text
+  const s = (t: any) => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E€]/g, "");
+  let y = H - 30;
+  const line = (t: string, f = font, size = 8) => { page.drawText(s(t).slice(0, 48), { x: 15, y, size, font: f }); y -= lh; };
+  const lr = (a: string, b: string, f = font) => {
+    page.drawText(s(a).slice(0, 34), { x: 15, y, size: 8, font: f });
+    const bt = s(b); page.drawText(bt, { x: W - 15 - f.widthOfTextAtSize(bt, 8), y, size: 8, font: f }); y -= lh;
+  };
+  line("CARREFOUR", bold, 14); y -= 4;
+  line(r.store ?? ""); if (r.address) line(r.address);
+  line(`Ticket: ${r.ticket_id}`);
+  line(`Fecha: ${r.purchase_date ? new Date(r.purchase_date).toLocaleString("es-ES", { timeZone: "Europe/Madrid" }) : "-"}`);
+  line("-".repeat(48));
+  for (const it of items) {
+    lr(`${it.numberUnits ?? 1} x ${it.description ?? ""}`, Number(it.netAmount ?? 0).toFixed(2));
+  }
+  if (!items.length) line("(Sin desglose de articulos)");
+  line("-".repeat(48));
+  lr("TOTAL", `${Number(r.amount ?? 0).toFixed(2)} EUR`, bold);
+  y -= 8; line("Copia generada a partir de los datos de la compra.", font, 6);
+  return doc.save();
+}
+
 type Creds = { token: string; csrf?: string };
 
 /** Extracts the bearer token and csrf token from a pasted "Copy as cURL" text (or a raw token). */
@@ -46,8 +78,9 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
     const to = new Date(Date.now() + 86400000).toISOString();
     const from = new Date(Date.now() - (data.years ?? 3) * 365 * 86400000).toISOString();
 
-    const { data: existing } = await supabase.from("carrefour_tickets" as any).select("ticket_id");
+    const { data: existing } = await supabase.from("carrefour_tickets" as any).select("ticket_id, items");
     const known = new Set(((existing ?? []) as any[]).map((r) => r.ticket_id));
+    const withItems = new Set(((existing ?? []) as any[]).filter((r) => Array.isArray(r.items) && r.items.length).map((r) => r.ticket_id));
 
     const all: any[] = [];
     let off = { ticketOffset: 0, currentTickets: 0, atgfOffset: 0, atgnfOffset: 0, currentAtgfOrders: 0, currentAtgnfOrders: 0 };
@@ -72,9 +105,10 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
     for (const p of all.filter((p) => p?.purchaseId)) {
       const id = String(p.purchaseId);
       let items: any = undefined;
-      if (!known.has(id) && p.orderSource === "TICKET") {
+      let detail: any = undefined;
+      if (!withItems.has(id)) {
         const d = await cfGet(`/md-ticketsAccount-v1/tickets/${encodeURIComponent(id)}`, c);
-        if (d.ok) items = ((await d.json()) as any)?.items ?? null;
+        if (d.ok) { detail = await d.json(); items = detail?.items ?? null; }
       }
       rows.push({
         user_id: userId,
@@ -85,7 +119,7 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
         amount: typeof p.amount === "number" ? p.amount : null,
         source: p.orderSource ?? null,
         ...(items !== undefined ? { items } : {}),
-        raw: p,
+        raw: detail ? { ...p, detail } : p,
       });
     }
     if (rows.length) {
@@ -108,10 +142,18 @@ export const downloadCarrefourTicket = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase.from("carrefour_tickets" as any).select("*").eq("id", data.id).single();
     if (error || !row) throw new Error(error?.message ?? "Ticket no encontrado");
     const r: any = row;
-    const res = await cfGet(`/md-ticketsAccount-v1/tickets/${encodeURIComponent(r.ticket_id)}/pdf`, c);
-    if (!res.ok) throw new Error(`PDF HTTP ${res.status}`);
-    const pdf = new Uint8Array(await res.arrayBuffer());
-    if (!(pdf[0] === 0x25 && pdf[1] === 0x50)) throw new Error("La respuesta no es un PDF");
+    const res = await fetch(`${API}/md-ticketsAccount-v1/tickets/${encodeURIComponent(r.ticket_id)}/pdf`,
+      { headers: { ...headers(c), accept: "application/pdf, */*" } });
+    if (res.status === 401) throw new Error("La sesión de Carrefour ha caducado. Vuelve a copiar la petición desde Carrefour.");
+    let pdf: Uint8Array | null = res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+    if (!pdf || !(pdf[0] === 0x25 && pdf[1] === 0x50)) {
+      // Carrefour no conserva el PDF de tickets antiguos: generamos uno con los datos guardados
+      if (!Array.isArray(r.items) || !r.items.length) {
+        const d = await cfGet(`/md-ticketsAccount-v1/tickets/${encodeURIComponent(r.ticket_id)}`, c);
+        if (d.ok) { const j: any = await d.json(); if (j?.items) { r.items = j.items; await supabase.from("carrefour_tickets" as any).update({ items: j.items } as any).eq("id", data.id); } }
+      }
+      pdf = await buildTicketPdf(r);
+    }
     const day = r.purchase_date ? String(r.purchase_date).slice(0, 10) : "sin-fecha";
     const path = `${userId}/carrefour/${day}_${r.ticket_id}.pdf`;
     const { error: e2 } = await supabase.storage.from("invoices").upload(path, pdf, { contentType: "application/pdf", upsert: true });
