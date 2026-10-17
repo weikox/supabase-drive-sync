@@ -46,8 +46,9 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
     const to = new Date(Date.now() + 86400000).toISOString();
     const from = new Date(Date.now() - (data.years ?? 3) * 365 * 86400000).toISOString();
 
-    const { data: existing } = await supabase.from("carrefour_tickets" as any).select("ticket_id");
+    const { data: existing } = await supabase.from("carrefour_tickets" as any).select("ticket_id, items");
     const known = new Set(((existing ?? []) as any[]).map((r) => r.ticket_id));
+    const withItems = new Set(((existing ?? []) as any[]).filter((r) => Array.isArray(r.items) && r.items.length).map((r) => r.ticket_id));
 
     const all: any[] = [];
     let off = { ticketOffset: 0, currentTickets: 0, atgfOffset: 0, atgnfOffset: 0, currentAtgfOrders: 0, currentAtgnfOrders: 0 };
@@ -72,9 +73,10 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
     for (const p of all.filter((p) => p?.purchaseId)) {
       const id = String(p.purchaseId);
       let items: any = undefined;
-      if (!known.has(id) && p.orderSource === "TICKET") {
+      let detail: any = undefined;
+      if (!withItems.has(id)) {
         const d = await cfGet(`/md-ticketsAccount-v1/tickets/${encodeURIComponent(id)}`, c);
-        if (d.ok) items = ((await d.json()) as any)?.items ?? null;
+        if (d.ok) { detail = await d.json(); items = detail?.items ?? null; }
       }
       rows.push({
         user_id: userId,
@@ -85,7 +87,7 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
         amount: typeof p.amount === "number" ? p.amount : null,
         source: p.orderSource ?? null,
         ...(items !== undefined ? { items } : {}),
-        raw: p,
+        raw: detail ? { ...p, detail } : p,
       });
     }
     if (rows.length) {
@@ -108,10 +110,18 @@ export const downloadCarrefourTicket = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase.from("carrefour_tickets" as any).select("*").eq("id", data.id).single();
     if (error || !row) throw new Error(error?.message ?? "Ticket no encontrado");
     const r: any = row;
-    const res = await cfGet(`/md-ticketsAccount-v1/tickets/${encodeURIComponent(r.ticket_id)}/pdf`, c);
-    if (!res.ok) throw new Error(`PDF HTTP ${res.status}`);
-    const pdf = new Uint8Array(await res.arrayBuffer());
-    if (!(pdf[0] === 0x25 && pdf[1] === 0x50)) throw new Error("La respuesta no es un PDF");
+    const res = await fetch(`${API}/md-ticketsAccount-v1/tickets/${encodeURIComponent(r.ticket_id)}/pdf`,
+      { headers: { ...headers(c), accept: "application/pdf, */*" } });
+    if (res.status === 401) throw new Error("La sesión de Carrefour ha caducado. Vuelve a copiar la petición desde Carrefour.");
+    let pdf: Uint8Array | null = res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+    if (!pdf || !(pdf[0] === 0x25 && pdf[1] === 0x50)) {
+      // Carrefour no conserva el PDF de tickets antiguos: generamos uno con los datos guardados
+      if (!Array.isArray(r.items) || !r.items.length) {
+        const d = await cfGet(`/md-ticketsAccount-v1/tickets/${encodeURIComponent(r.ticket_id)}`, c);
+        if (d.ok) { const j: any = await d.json(); if (j?.items) { r.items = j.items; await supabase.from("carrefour_tickets" as any).update({ items: j.items } as any).eq("id", data.id); } }
+      }
+      pdf = await buildTicketPdf(r);
+    }
     const day = r.purchase_date ? String(r.purchase_date).slice(0, 10) : "sin-fecha";
     const path = `${userId}/carrefour/${day}_${r.ticket_id}.pdf`;
     const { error: e2 } = await supabase.storage.from("invoices").upload(path, pdf, { contentType: "application/pdf", upsert: true });
