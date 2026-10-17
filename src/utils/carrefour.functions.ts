@@ -3,6 +3,38 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 const API = "https://pro.api.carrefour.es";
 
+/** Builds a receipt-style PDF from stored ticket data (fallback when Carrefour no longer keeps the PDF). */
+async function buildTicketPdf(r: any): Promise<Uint8Array> {
+  const { PDFDocument, StandardFonts } = await import("pdf-lib");
+  const items: any[] = Array.isArray(r.items) ? r.items : [];
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Courier);
+  const bold = await doc.embedFont(StandardFonts.CourierBold);
+  const W = 260, lh = 12, H = Math.max(400, 200 + items.length * lh * 2);
+  const page = doc.addPage([W, H]);
+  // WinAnsi-safe text
+  const s = (t: any) => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E€]/g, "");
+  let y = H - 30;
+  const line = (t: string, f = font, size = 8) => { page.drawText(s(t).slice(0, 48), { x: 15, y, size, font: f }); y -= lh; };
+  const lr = (a: string, b: string, f = font) => {
+    page.drawText(s(a).slice(0, 34), { x: 15, y, size: 8, font: f });
+    const bt = s(b); page.drawText(bt, { x: W - 15 - f.widthOfTextAtSize(bt, 8), y, size: 8, font: f }); y -= lh;
+  };
+  line("CARREFOUR", bold, 14); y -= 4;
+  line(r.store ?? ""); if (r.address) line(r.address);
+  line(`Ticket: ${r.ticket_id}`);
+  line(`Fecha: ${r.purchase_date ? new Date(r.purchase_date).toLocaleString("es-ES", { timeZone: "Europe/Madrid" }) : "-"}`);
+  line("-".repeat(48));
+  for (const it of items) {
+    lr(`${it.numberUnits ?? 1} x ${it.description ?? ""}`, Number(it.netAmount ?? 0).toFixed(2));
+  }
+  if (!items.length) line("(Sin desglose de articulos)");
+  line("-".repeat(48));
+  lr("TOTAL", `${Number(r.amount ?? 0).toFixed(2)} EUR`, bold);
+  y -= 8; line("Copia generada a partir de los datos de la compra.", font, 6);
+  return doc.save();
+}
+
 type Creds = { token: string; csrf?: string };
 
 /** Extracts the bearer token and csrf token from a pasted "Copy as cURL" text (or a raw token). */
