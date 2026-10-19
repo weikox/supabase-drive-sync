@@ -17,7 +17,10 @@ async function tokenCall(body: Record<string, string>) {
     headers: { Authorization: BASIC, "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(body),
   });
-  if (!res.ok) throw new Error(res.status === 400 || res.status === 401 ? EXP : `Lidl HTTP ${res.status}`);
+  if (!res.ok) {
+    const txt = (await res.text().catch(() => "")).slice(0, 300);
+    throw new Error(`Lidl rechazó el acceso (HTTP ${res.status}): ${txt || "sin detalle"}. Genera un enlace nuevo y repite.`);
+  }
   return (await res.json()) as { access_token: string; refresh_token: string };
 }
 
