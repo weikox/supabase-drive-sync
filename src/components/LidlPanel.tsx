@@ -57,8 +57,9 @@ export function LidlPanel() {
   }
   useEffect(() => { load(); refreshStatus(); }, []);
   async function refreshStatus() { try { const s = await _status({ headers: await authHeaders() } as any); setConnected(s.connected); } catch {} }
+  const [authUrl, setAuthUrl] = useState<string | null>(null);
   async function handleStart() {
-    try { const r = await _start({ headers: await authHeaders() } as any); window.open(r.url, "_blank"); }
+    try { const r = await _start({ headers: await authHeaders() } as any); setAuthUrl(r.url); }
     catch (e: any) { toast.error(e?.message ?? "Error"); }
   }
   async function handleFinish() {
@@ -162,7 +163,17 @@ export function LidlPanel() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <Button variant="outline" onClick={handleStart}>Abrir acceso a Lidl</Button>
+          <Button variant="outline" onClick={handleStart}>Generar enlace de acceso a Lidl</Button>
+          {authUrl && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex flex-wrap gap-2">
+                <Button asChild size="sm"><a href={authUrl} target="_blank" rel="noopener noreferrer">Abrir acceso a Lidl</a></Button>
+                <Button size="sm" variant="outline" onClick={async () => { await navigator.clipboard.writeText(authUrl); toast.success("Enlace copiado"); }}>Copiar enlace</Button>
+              </div>
+              <p className="text-xs text-muted-foreground break-all select-all">{authUrl}</p>
+              <p className="text-xs text-muted-foreground">Usa solo el último enlace generado. Debe abrirse en accounts.lidl.com.</p>
+            </div>
+          )}
           <Textarea rows={3} value={curl} onChange={(e) => setCurl(e.target.value)} placeholder="com.lidlplus.app://callback?code=..." />
           <Button onClick={handleFinish} disabled={linking || !curl.trim()}>
             {linking && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Conectar
