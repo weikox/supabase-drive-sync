@@ -16,6 +16,7 @@ import { CurenergiaPanel } from "@/components/CurenergiaPanel";
 import { PrestoParkingPanel } from "@/components/PrestoParkingPanel";
 import { CarrefourPanel } from "@/components/CarrefourPanel";
 import { EroskiPanel } from "@/components/EroskiPanel";
+import { LidlPanel } from "@/components/LidlPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -108,6 +109,7 @@ function Dashboard() {
           <TabsTrigger value="prestoparking">PrestoParking</TabsTrigger>
           <TabsTrigger value="carrefour">Carrefour</TabsTrigger>
           <TabsTrigger value="eroski">Eroski</TabsTrigger>
+          <TabsTrigger value="lidl">Lidl</TabsTrigger>
         </TabsList>
         <TabsContent value="naturgy"><NaturgyPanel /></TabsContent>
         <TabsContent value="gomez"><GomezPanel /></TabsContent>
@@ -117,6 +119,7 @@ function Dashboard() {
         <TabsContent value="prestoparking"><PrestoParkingPanel /></TabsContent>
         <TabsContent value="carrefour"><CarrefourPanel /></TabsContent>
         <TabsContent value="eroski"><EroskiPanel /></TabsContent>
+        <TabsContent value="lidl"><LidlPanel /></TabsContent>
       </Tabs>
     </div>
   );
