@@ -26,14 +26,38 @@ function headers(s: Sess): Record<string, string> {
   };
 }
 
+async function scrapfly(key: string, s: Sess, url: string, init: RequestInit): Promise<{ status: number; text: string }> {
+  const p = new URLSearchParams({ key, url, asp: "true", country: "es" });
+  for (const [k, v] of Object.entries(headers(s))) p.append(`headers[${k}]`, v);
+  const method = (init.method ?? "GET").toUpperCase();
+  const res = await fetch(`https://api.scrapfly.io/scrape?${p}`, {
+    method,
+    body: method === "GET" ? undefined : ((init.body as string) ?? ""),
+    headers: method === "GET" ? undefined : { "content-type": "application/json;charset=UTF-8" },
+  });
+  const j: any = await res.json().catch(() => null);
+  if (!res.ok || !j?.result) {
+    console.error("Scrapfly error", res.status, j?.message);
+    throw new Error(`Scrapfly respondió HTTP ${res.status}${j?.message ? `: ${j.message}` : ""}`);
+  }
+  return { status: j.result.status_code ?? 200, text: String(j.result.content ?? "") };
+}
+
 async function call(s: Sess, path: string, init: RequestInit = {}): Promise<any> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: headers(s) });
-  const text = await res.text();
-  if (!res.ok || text.trim().startsWith("<")) {
+  const key = process.env.SCRAPFLY_API_KEY;
+  let status: number, text: string, ok: boolean;
+  if (key) {
+    ({ status, text } = await scrapfly(key, s, `${BASE}${path}`, init));
+    ok = status >= 200 && status < 300;
+  } else {
+    const res = await fetch(`${BASE}${path}`, { ...init, headers: headers(s) });
+    text = await res.text(); status = res.status; ok = res.ok;
+  }
+  if (!ok || text.trim().startsWith("<")) {
     throw new Error(
-      res.status === 403 || res.status === 401 || text.includes("Access Denied")
+      status === 403 || status === 401 || text.includes("Access Denied")
         ? "La sesión de Curenergía ha caducado. Pega una petición nueva."
-        : `Curenergía respondió HTTP ${res.status}`,
+        : `Curenergía respondió HTTP ${status}`,
     );
   }
   return JSON.parse(text);
