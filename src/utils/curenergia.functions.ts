@@ -8,12 +8,11 @@ const UA =
 
 type Sess = { auth_token: string; cookie: string };
 
-function headers(s: Sess): Record<string, string> {
-  return {
-    accept: "application/json, text/plain, */*",
+function headers(s: Sess, method = "GET"): Record<string, string> {
+  const h: Record<string, string> = {
+    accept: "application/json",
     "accept-language": "es,es-ES;q=0.9,en;q=0.8",
     "auth-token": s.auth_token,
-    "content-type": "application/json;charset=UTF-8",
     cookie: s.cookie,
     origin: "https://www.curenergia.es",
     referer: "https://www.curenergia.es/wclifrmr/cur/gestiones/facturas/historico-facturas",
@@ -25,16 +24,18 @@ function headers(s: Sess): Record<string, string> {
     "sec-fetch-site": "same-origin",
     "user-agent": UA,
   };
+  if (method !== "GET") h["content-type"] = "application/json";
+  return h;
 }
 
 async function scrapfly(key: string, s: Sess, url: string, init: RequestInit): Promise<{ status: number; text: string }> {
   const p = new URLSearchParams({ key, url, asp: "true", country: "es" });
-  for (const [k, v] of Object.entries(headers(s))) p.append(`headers[${k}]`, v);
   const method = (init.method ?? "GET").toUpperCase();
+  for (const [k, v] of Object.entries(headers(s, method))) p.append(`headers[${k}]`, v);
   const res = await fetch(`https://api.scrapfly.io/scrape?${p}`, {
     method,
-    body: method === "GET" ? undefined : ((init.body as string) ?? ""),
-    headers: method === "GET" ? undefined : { "content-type": "application/json;charset=UTF-8" },
+    body: method === "GET" ? undefined : ((init.body as string) || "{}"),
+    headers: method === "GET" ? undefined : { "content-type": "application/json" },
   });
   const j: any = await res.json().catch(() => null);
   if (!res.ok || !j?.result) {
@@ -50,14 +51,16 @@ async function call(s: Sess, path: string, init: RequestInit = {}, key?: string)
     ({ status, text } = await scrapfly(key, s, `${BASE}${path}`, init));
     ok = status >= 200 && status < 300;
   } else {
-    const res = await fetch(`${BASE}${path}`, { ...init, headers: headers(s) });
+    const method = (init.method ?? "GET").toUpperCase();
+    const body = method === "GET" ? undefined : ((init.body as string) || "{}");
+    const res = await fetch(`${BASE}${path}`, { ...init, body, headers: headers(s, method) });
     text = await res.text(); status = res.status; ok = res.ok;
   }
   if (!ok || text.trim().startsWith("<")) {
     throw new Error(
       status === 403 || status === 401 || text.includes("Access Denied")
         ? "La sesión de Curenergía ha caducado. Pega una petición nueva."
-        : `Curenergía respondió HTTP ${status}`,
+        : `Curenergía respondió HTTP ${status}${text ? `: ${text.slice(0, 300)}` : ""}`,
     );
   }
   return JSON.parse(text);
@@ -120,7 +123,7 @@ async function doSync(supabase: any, userId: string) {
     const s = await getSession(supabase, userId);
     let contracts: any[] = [];
     try {
-      const profile = await call(s, "/usuario/data?codRs=12908457&origenLogin=19", {}, key);
+      const profile = await call(s, "/usuario/data?loginLanguage=es&origenLogin=19&viewAPP=RESIDENCIALNM", { method: "POST" }, key);
       contracts = profile.listaContratosTotal ?? [];
     } catch (e: any) { if (String(e?.message).includes("HTTP 418")) throw e; }
     if (!contracts.length) contracts = [
