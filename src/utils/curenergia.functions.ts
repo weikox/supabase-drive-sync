@@ -82,6 +82,7 @@ async function getSession(supabase: any, userId: string): Promise<Sess> {
   const { data } = await supabase
     .from("curenergia_sessions").select("auth_token, cookie").eq("user_id", userId).maybeSingle();
   if (!data) throw new Error("Primero pega una petición de Curenergía (botón «Conectar sesión»)");
+  if (data.cookie === "bookmarklet") throw new Error("La sesión guardada es la del botón/extensión, no una sesión de Curenergía. Usa la extensión o pega un cURL nuevo.");
   return data;
 }
 
