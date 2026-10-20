@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+ 
+- Curenergía resolves Scrapfly credentials from the authenticated app_secrets read per request and passes them explicitly to provider calls; never mutate process.env with user credentials, to prevent cross-user leakage.

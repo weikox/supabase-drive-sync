@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { getCurenergiaScrapflyKey } from "./curenergia-config.server";
 
 const BASE = "https://www.curenergia.es/webcli";
 const UA =
@@ -43,8 +44,7 @@ async function scrapfly(key: string, s: Sess, url: string, init: RequestInit): P
   return { status: j.result.status_code ?? 200, text: String(j.result.content ?? "") };
 }
 
-async function call(s: Sess, path: string, init: RequestInit = {}): Promise<any> {
-  const key = process.env.SCRAPFLY_API_KEY;
+async function call(s: Sess, path: string, init: RequestInit = {}, key?: string): Promise<any> {
   let status: number, text: string, ok: boolean;
   if (key) {
     ({ status, text } = await scrapfly(key, s, `${BASE}${path}`, init));
@@ -116,10 +116,11 @@ function friendly(e: any): string {
 
 async function doSync(supabase: any, userId: string) {
   {
+    const key = await getCurenergiaScrapflyKey(supabase, process.env.SCRAPFLY_API_KEY);
     const s = await getSession(supabase, userId);
     let contracts: any[] = [];
     try {
-      const profile = await call(s, "/usuario/data?codRs=12908457&origenLogin=19");
+      const profile = await call(s, "/usuario/data?codRs=12908457&origenLogin=19", {}, key);
       contracts = profile.listaContratosTotal ?? [];
     } catch (e: any) { if (String(e?.message).includes("HTTP 418")) throw e; }
     if (!contracts.length) contracts = [
@@ -129,8 +130,8 @@ async function doSync(supabase: any, userId: string) {
     let count = 0;
     for (const c of contracts) {
       const supply = String(c.codLineaPdt ?? c.descLineaPdt ?? "").toUpperCase().includes("GAS") ? "gas" : "luz";
-      await call(s, `/usuario/data?codRs=${c.codRecepSum}&origenLogin=19`);
-      const list = await call(s, "/nm/facturas/lista?language=es", { method: "POST" });
+      await call(s, `/usuario/data?codRs=${c.codRecepSum}&origenLogin=19`, {}, key);
+      const list = await call(s, "/nm/facturas/lista?language=es", { method: "POST" }, key);
       const rows = (list.facturas ?? []).map((f: any) => ({
         user_id: userId,
         supply,
@@ -164,6 +165,7 @@ export const downloadCurenergiaInvoice = createServerFn({ method: "POST" })
 
 async function doDownload(supabase: any, userId: string, id: string) {
   {
+    const key = await getCurenergiaScrapflyKey(supabase, process.env.SCRAPFLY_API_KEY);
     const data = { id };
     const { data: inv, error } = await supabase
       .from("curenergia_invoices").select("*").eq("id", data.id).single();
@@ -172,7 +174,7 @@ async function doDownload(supabase: any, userId: string, id: string) {
     const res = await call(s, "/nm/facturas/descarga?language=es", {
       method: "POST",
       body: JSON.stringify({ numFactura: inv.invoice_id }),
-    });
+    }, key);
     if (!res.fichero) throw new Error("Curenergía no devolvió el PDF");
     const bin = Uint8Array.from(atob(res.fichero), (ch) => ch.charCodeAt(0));
     const path = `${userId}/curenergia/${inv.supply}/${(inv.invoice_num ?? inv.invoice_id).replace(/[^\w.-]/g, "_")}.pdf`;
