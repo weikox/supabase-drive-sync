@@ -32,7 +32,7 @@
     const method = (o.method || "GET").toUpperCase();
     const headers = { accept: "application/json, text/plain, */*", ...H };
     let body;
-    if (method !== "GET") { headers["content-type"] = "application/json"; body = o.body || "{}"; }
+    if (o.body) { headers["content-type"] = "application/json;charset=UTF-8"; body = o.body; }
     const r = await fetch("/webcli" + p, { method, body, headers, credentials: "include" });
     const t = await r.text();
     if (r.status === 418) throw Object.assign(new Error("Curenergía ha frenado las peticiones (418). Espera unos minutos, recarga la página y vuelve a pulsar."), { stop: true });
@@ -41,33 +41,24 @@
   };
 
   try {
-    say("Buscando tu sesión…");
-    let prof = null, lastErr = "";
-    for (const c of cands) {
+    say("Leyendo tus facturas…");
+    let l = null, lastErr = "";
+    // Igual que la web: POST directo a la lista, sin cuerpo y sin llamadas previas.
+    for (const c of [...cands.filter(Boolean), ""].slice(0, 3)) {
       H = c ? { "auth-token": c } : {};
-      try { prof = await api("/usuario/data?loginLanguage=es&origenLogin=19&viewAPP=RESIDENCIALNM", { method: "POST" }); if (prof?.listaContratosTotal) break; prof = null; lastErr = "respuesta sin contratos"; }
+      try { l = await api("/nm/facturas/lista?language=es", { method: "POST" }); if (l?.facturas) break; l = null; lastErr = "respuesta sin facturas"; }
       catch (e) { if (e.stop) throw e; lastErr = e.message; }
       await wait(1500);
     }
-    if (!prof) throw new Error(`No encuentro tu sesión (${lastErr || "sin token"}). Entra en Mis facturas, espera a que cargue y vuelve a pulsar.`);
-    const all = [];
-    for (const c of prof.listaContratosTotal) {
-      const sup = c.codLineaPdt === "GAS" ? "gas" : "luz";
-      say("Leyendo facturas de " + sup + "…");
-      await wait(1200);
-      await api("/usuario/data?codRs=" + c.codRecepSum + "&origenLogin=19");
-      await wait(1200);
-      const l = await api("/nm/facturas/lista?language=es", { method: "POST" });
-      for (const f of l.facturas || []) all.push({ ...f, supply: sup, codContrato: f.codContrato || c.codContrato, _rs: c.codRecepSum });
-    }
+    if (!l) throw new Error(`No puedo leer tus facturas (${lastErr || "sin sesión"}). Abre Facturas, espera a que cargue y vuelve a pulsar.`);
+    const all = (l.facturas || []).map((f) => ({ ...f, supply: /GAS/i.test(String(f.tipoProducto || f.descPdt || "")) ? "gas" : "luz" }));
     await send({ invoices: all });
-    let ok = 0, ko = 0, rs = null;
+    let ok = 0, ko = 0;
     for (let i = 0; i < all.length; i++) {
       const f = all[i];
       say(`Descargando PDF ${i + 1} de ${all.length}…`);
       await wait(1500);
       try {
-        if (rs !== f._rs) { await api("/usuario/data?codRs=" + f._rs + "&origenLogin=19"); rs = f._rs; await wait(1000); }
         const d = await api("/nm/facturas/descarga?language=es", { method: "POST", body: JSON.stringify({ numFactura: f.factura }) });
         if (!d.fichero) throw 0;
         await send({ pdf: { invoice_id: f.factura, base64: d.fichero } });
