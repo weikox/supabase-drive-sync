@@ -10,7 +10,7 @@ type Sess = { auth_token: string; cookie: string };
 
 function headers(s: Sess, method = "GET"): Record<string, string> {
   const h: Record<string, string> = {
-    accept: "application/json",
+    accept: "application/json, text/plain, */*",
     "accept-language": "es,es-ES;q=0.9,en;q=0.8",
     "auth-token": s.auth_token,
     cookie: s.cookie,
@@ -24,7 +24,7 @@ function headers(s: Sess, method = "GET"): Record<string, string> {
     "sec-fetch-site": "same-origin",
     "user-agent": UA,
   };
-  if (method !== "GET") h["content-type"] = "application/json";
+  if (method !== "GET") h["content-type"] = "application/json;charset=UTF-8";
   return h;
 }
 
@@ -34,8 +34,8 @@ async function scrapfly(key: string, s: Sess, url: string, init: RequestInit): P
   for (const [k, v] of Object.entries(headers(s, method))) p.append(`headers[${k}]`, v);
   const res = await fetch(`https://api.scrapfly.io/scrape?${p}`, {
     method,
-    body: method === "GET" ? undefined : ((init.body as string) || "{}"),
-    headers: method === "GET" ? undefined : { "content-type": "application/json" },
+    body: method === "GET" ? undefined : ((init.body as string) ?? ""),
+    headers: method === "GET" ? undefined : { "content-type": "application/json;charset=UTF-8" },
   });
   const j: any = await res.json().catch(() => null);
   if (!res.ok || !j?.result) {
@@ -52,7 +52,7 @@ async function call(s: Sess, path: string, init: RequestInit = {}, key?: string)
     ok = status >= 200 && status < 300;
   } else {
     const method = (init.method ?? "GET").toUpperCase();
-    const body = method === "GET" ? undefined : ((init.body as string) || "{}");
+    const body = method === "GET" ? undefined : ((init.body as string) ?? "");
     const res = await fetch(`${BASE}${path}`, { ...init, body, headers: headers(s, method) });
     text = await res.text(); status = res.status; ok = res.ok;
   }
@@ -122,39 +122,26 @@ async function doSync(supabase: any, userId: string) {
   {
     const key = await getCurenergiaScrapflyKey(supabase, process.env.SCRAPFLY_API_KEY);
     const s = await getSession(supabase, userId);
-    let contracts: any[] = [];
-    try {
-      const profile = await call(s, "/usuario/data?loginLanguage=es&origenLogin=19&viewAPP=RESIDENCIALNM", { method: "POST" }, key);
-      contracts = profile.listaContratosTotal ?? [];
-    } catch (e: any) { if (String(e?.message).includes("HTTP 418")) throw e; }
-    if (!contracts.length) contracts = [
-      { codRecepSum: "12908457", codLineaPdt: "ELE" },
-      { codRecepSum: "18791643", codLineaPdt: "GAS" },
-    ];
-    let count = 0;
-    for (const c of contracts) {
-      const supply = String(c.codLineaPdt ?? c.descLineaPdt ?? "").toUpperCase().includes("GAS") ? "gas" : "luz";
-      await call(s, `/usuario/data?codRs=${c.codRecepSum}&origenLogin=19`, {}, key);
-      const list = await call(s, "/nm/facturas/lista?language=es", { method: "POST" }, key);
-      const rows = (list.facturas ?? []).map((f: any) => ({
-        user_id: userId,
-        supply,
-        contract_id: String(f.codContrato ?? c.codContrato),
-        invoice_id: f.factura,
-        invoice_num: f.numFacturaIva || null,
-        issued_date: f.fecha || null,
-        period_from: f.fecMinTerEne || null,
-        period_to: f.fecMaxTerEne || null,
-        amount: typeof f.importeOrdenacion === "number" ? f.importeOrdenacion : toNum(f.importe),
-        consumption: f.consumo || null,
-        status: f.descEstado || null,
-      }));
-      if (rows.length) {
-        const { error } = await supabase.from("curenergia_invoices").upsert(rows, { onConflict: "user_id,invoice_id" });
-        if (error) throw new Error(error.message);
-      }
-      count += rows.length;
+    // Llamada directa, igual que el portal: sin peticiones previas que disparen el antirobots.
+    const list = await call(s, "/nm/facturas/lista?language=es", { method: "POST" }, key);
+    const rows = (list.facturas ?? []).map((f: any) => ({
+      user_id: userId,
+      supply: /GAS/i.test(String(f.tipoProducto ?? f.descPdt ?? "")) ? "gas" : "luz",
+      contract_id: f.codContrato != null ? String(f.codContrato) : null,
+      invoice_id: f.factura,
+      invoice_num: f.numFacturaIva || null,
+      issued_date: f.fecha || null,
+      period_from: f.fecMinTerEne || null,
+      period_to: f.fecMaxTerEne || null,
+      amount: typeof f.importeOrdenacion === "number" ? f.importeOrdenacion : toNum(f.importe),
+      consumption: f.consumo || null,
+      status: f.descEstado || null,
+    })).filter((r: any) => r.invoice_id);
+    if (rows.length) {
+      const { error } = await supabase.from("curenergia_invoices").upsert(rows, { onConflict: "user_id,invoice_id" });
+      if (error) throw new Error(error.message);
     }
+    const count = rows.length;
     return { count };
   }
 }
