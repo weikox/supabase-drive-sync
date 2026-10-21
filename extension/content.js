@@ -16,9 +16,11 @@
     const list = /^ey[\w-]+\.[\w-]+\./.test(v) ? jwt : other;
     if (!jwt.includes(v) && !other.includes(v)) list.push(v);
   };
+  add(sessionStorage.getItem("jwtToken"));
+  add(localStorage.getItem("jwtToken"));
   for (const st of [sessionStorage, localStorage]) for (let i = 0; i < st.length; i++) {
     const k = st.key(i), v = st.getItem(k);
-    if (/auth.?token|^token$|access.?token/i.test(k)) add(v);
+    if (/jwt|auth.?token|^token$|access.?token/i.test(k)) add(v);
     try { const o = JSON.parse(v); if (o && typeof o === "object") for (const kk in o) if (/token/i.test(kk)) add(o[kk]); } catch {}
     if (/^"?ey[\w-]+\.[\w-]+\./.test(v || "")) add(v);
   }
@@ -40,14 +42,14 @@
 
   try {
     say("Buscando tu sesión…");
-    let prof = null;
+    let prof = null, lastErr = "";
     for (const c of cands) {
       H = c ? { "auth-token": c } : {};
-      try { prof = await api("/usuario/data?loginLanguage=es&origenLogin=19&viewAPP=RESIDENCIALNM", { method: "POST" }); if (prof?.listaContratosTotal) break; prof = null; }
-      catch (e) { if (e.stop) throw e; }
+      try { prof = await api("/usuario/data?loginLanguage=es&origenLogin=19&viewAPP=RESIDENCIALNM", { method: "POST" }); if (prof?.listaContratosTotal) break; prof = null; lastErr = "respuesta sin contratos"; }
+      catch (e) { if (e.stop) throw e; lastErr = e.message; }
       await wait(1500);
     }
-    if (!prof) throw new Error("No encuentro tu sesión. Entra en Mis facturas, espera a que cargue y vuelve a pulsar.");
+    if (!prof) throw new Error(`No encuentro tu sesión (${lastErr || "sin token"}). Entra en Mis facturas, espera a que cargue y vuelve a pulsar.`);
     const all = [];
     for (const c of prof.listaContratosTotal) {
       const sup = c.codLineaPdt === "GAS" ? "gas" : "luz";
