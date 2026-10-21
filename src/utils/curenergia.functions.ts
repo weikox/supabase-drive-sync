@@ -10,7 +10,7 @@ type Sess = { auth_token: string; cookie: string };
 
 function headers(s: Sess, method = "GET"): Record<string, string> {
   const h: Record<string, string> = {
-    accept: "application/json",
+    accept: "application/json, text/plain, */*",
     "accept-language": "es,es-ES;q=0.9,en;q=0.8",
     "auth-token": s.auth_token,
     cookie: s.cookie,
@@ -24,7 +24,7 @@ function headers(s: Sess, method = "GET"): Record<string, string> {
     "sec-fetch-site": "same-origin",
     "user-agent": UA,
   };
-  if (method !== "GET") h["content-type"] = "application/json";
+  if (method !== "GET") h["content-type"] = "application/json;charset=UTF-8";
   return h;
 }
 
@@ -34,8 +34,8 @@ async function scrapfly(key: string, s: Sess, url: string, init: RequestInit): P
   for (const [k, v] of Object.entries(headers(s, method))) p.append(`headers[${k}]`, v);
   const res = await fetch(`https://api.scrapfly.io/scrape?${p}`, {
     method,
-    body: method === "GET" ? undefined : ((init.body as string) || "{}"),
-    headers: method === "GET" ? undefined : { "content-type": "application/json" },
+    body: method === "GET" ? undefined : ((init.body as string) ?? ""),
+    headers: method === "GET" ? undefined : { "content-type": "application/json;charset=UTF-8" },
   });
   const j: any = await res.json().catch(() => null);
   if (!res.ok || !j?.result) {
@@ -52,7 +52,7 @@ async function call(s: Sess, path: string, init: RequestInit = {}, key?: string)
     ok = status >= 200 && status < 300;
   } else {
     const method = (init.method ?? "GET").toUpperCase();
-    const body = method === "GET" ? undefined : ((init.body as string) || "{}");
+    const body = method === "GET" ? undefined : ((init.body as string) ?? "");
     const res = await fetch(`${BASE}${path}`, { ...init, body, headers: headers(s, method) });
     text = await res.text(); status = res.status; ok = res.ok;
   }
