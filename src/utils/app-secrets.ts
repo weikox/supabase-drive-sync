@@ -18,3 +18,28 @@ export const withAppSecrets = createMiddleware({ type: "function" })
     }
     return next();
   });
+
+type SecretReader = {
+  from: (table: "app_secrets") => {
+    select: (columns: string) => PromiseLike<{
+      data: { key: string; value: string }[] | null;
+      error: unknown;
+    }>;
+  };
+};
+
+/**
+ * Reads a single app_secrets value for the current request (case-insensitive key).
+ * Keeps credentials request-scoped instead of copying them into process.env.
+ */
+export async function getAppSecret(
+  reader: SecretReader,
+  key: string,
+  runtimeValue?: string,
+): Promise<string | undefined> {
+  if (runtimeValue?.trim()) return runtimeValue.trim();
+  const { data, error } = await reader.from("app_secrets").select("key, value");
+  if (error) throw new Error("No se pudo leer app_secrets. Revisa el permiso de lectura.");
+  const want = key.trim().toUpperCase();
+  return data?.find((row) => row.key.trim().toUpperCase() === want)?.value.trim() || undefined;
+}

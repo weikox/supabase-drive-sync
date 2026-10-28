@@ -10,3 +10,6 @@
 <!-- LOVABLE:END -->
  
 - Curenergía resolves Scrapfly credentials from the authenticated app_secrets read per request and passes them explicitly to provider calls; never mutate process.env with user credentials, to prevent cross-user leakage.
+- Provider logins with usuario/contraseña read credentials from `app_secrets` (global) via `getAppSecret`/`withAppSecrets`, keys `CARREFOUR_USER`/`CARREFOUR_PASS`, `EROSKI_USER`/`EROSKI_PASS`, `CURENERGIA_USER`/`CURENERGIA_PASS`. A pasted cURL is still accepted as an override (empty field = credentials).
+- Eroski login encrypts email/password client-side with AES-128-ECB (fixed key `sda8ef54psrghty0`) then base64 twice (`src/utils/eroski-crypto.ts`); needs `nodejs_compat` for `node:crypto`.
+- Curenergía login is `POST /webcli/preLogin` with `Authorization: Basic user:pass`, returning `jwtToken` used as the `auth-token` header. Curenergía (Akamai) blocks datacenter IPs, so it only works through Scrapfly.

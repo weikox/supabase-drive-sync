@@ -229,19 +229,21 @@ export function CurenergiaPanel() {
         <div className="flex flex-col sm:flex-row gap-2">
           <Dialog open={pasteOpen} onOpenChange={setPasteOpen}>
             <DialogTrigger asChild>
-              <Button>Pegar sesión</Button>
+              <Button>Conectar</Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
               <DialogHeader>
-                <DialogTitle>Pegar sesión de Curenergía</DialogTitle>
+                <DialogTitle>Conectar con Curenergía</DialogTitle>
                 <DialogDescription>
-                  En curenergia.es pulsa F12 → Red, abre tus facturas, clic derecho en «lista» → Copiar → Copiar como cURL (bash) y pégalo aquí. Se traerán luz y gas a la vez.
+                  Deja el cuadro vacío para entrar con tu usuario y contraseña (CURENERGIA_USER / CURENERGIA_PASS).
+                  Si prefieres usar una sesión abierta, pega aquí el cURL (F12 → Red → «lista» → Copiar como cURL).
+                  Se traerán luz y gas a la vez.
                 </DialogDescription>
               </DialogHeader>
               <Textarea value={curl} onChange={(e) => setCurl(e.target.value)} rows={8}
-                placeholder="curl 'https://www.curenergia.es/webcli/nm/facturas/lista?language=es' ..." className="font-mono text-xs" />
+                placeholder="Opcional: pega aquí el cURL. Déjalo vacío para usar CURENERGIA_USER / CURENERGIA_PASS." className="font-mono text-xs" />
               <DialogFooter>
-                <Button onClick={connectAndSync} disabled={!curl.trim() || syncing}>
+                <Button onClick={connectAndSync} disabled={syncing}>
                   {syncing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Conectar y traer facturas
                 </Button>
               </DialogFooter>

@@ -52,14 +52,12 @@ export function EroskiPanel() {
   }
   useEffect(() => { load(); }, []);
 
-  const needCurl = () => { if (!curl.trim()) throw new Error("Pega primero la petición copiada de Eroski"); };
-  const dl = async (id: string) => _dl({ data: { id, curl }, headers: await authHeaders() } as any);
+  const dl = async (id: string) => _dl({ data: { id, curl: curl.trim() || undefined }, headers: await authHeaders() } as any);
 
   async function handleSync() {
     setSyncing(true);
     try {
-      needCurl();
-      const r = await _sync({ data: { curl }, headers: await authHeaders() } as any);
+      const r = await _sync({ data: { curl: curl.trim() || undefined }, headers: await authHeaders() } as any);
       toast.success(`${r.count} compras · ${r.nuevos} nuevas`);
       await load();
     } catch (e: any) { toast.error(e?.message ?? "Error al sincronizar"); }
@@ -74,7 +72,6 @@ export function EroskiPanel() {
         const u = await _url({ data: { path: r.pdf_storage_path }, headers: await authHeaders() } as any);
         await openPdf(u.url, name);
       } else {
-        needCurl();
         await openPdf((await dl(r.id)).url, name);
         await load();
       }
@@ -83,7 +80,6 @@ export function EroskiPanel() {
   }
 
   async function handleAll() {
-    try { needCurl(); } catch (e: any) { return toast.error(e.message); }
     const pending = rows.filter((r) => !r.pdf_storage_path);
     if (!pending.length) return toast.info("Todos los tickets ya están descargados");
     setBulk(true);
@@ -139,13 +135,14 @@ export function EroskiPanel() {
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle className="text-base">Conectar con tu sesión de Eroski</CardTitle>
+          <CardTitle className="text-base">Conectar con Eroski</CardTitle>
           <CardDescription>
-            Entra en Eroski → Mis compras, abre F12 → Red, recarga, clic derecho en "info" → Copiar como cURL y pégalo aquí. Vale unas 2 horas.
+            Pulsa «Sincronizar lista» para entrar con tu usuario y contraseña (EROSKI_USER / EROSKI_PASS).
+            Si prefieres, pega abajo el cURL de Eroski (F12 → Red → Copiar como cURL) para usar esa sesión.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea rows={3} value={curl} onChange={(e) => setCurl(e.target.value)} placeholder="curl 'https://areacliente.eroski.es/...' -H 'x-auth-token: ...'" />
+          <Textarea rows={3} value={curl} onChange={(e) => setCurl(e.target.value)} placeholder="Opcional: pega aquí el cURL. Déjalo vacío para usar EROSKI_USER / EROSKI_PASS." />
         </CardContent>
       </Card>
 
