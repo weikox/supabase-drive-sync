@@ -1,6 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getCurenergiaScrapflyKey } from "./curenergia-config.server";
+import { getAppSecret } from "./app-secrets";
+import { providerRequest } from "./provider-login.server";
+import { CookieJar } from "./cookie-jar.server";
 
 const BASE = "https://www.curenergia.es/webcli";
 const UA =
@@ -81,9 +84,48 @@ export function parseCurl(raw: string): Sess {
 async function getSession(supabase: any, userId: string): Promise<Sess> {
   const { data } = await supabase
     .from("curenergia_sessions").select("auth_token, cookie").eq("user_id", userId).maybeSingle();
-  if (!data) throw new Error("Primero pega una petición de Curenergía (botón «Conectar sesión»)");
-  if (data.cookie === "bookmarklet") throw new Error("La sesión guardada es la del botón/extensión, no una sesión de Curenergía. Usa la extensión o pega un cURL nuevo.");
-  return data;
+  if (data) {
+    if (data.cookie === "bookmarklet") throw new Error("La sesión guardada es la del botón/extensión, no una sesión de Curenergía. Usa la extensión o pega un cURL nuevo.");
+    return data;
+  }
+  const key = await getCurenergiaScrapflyKey(supabase, process.env.SCRAPFLY_API_KEY);
+  const s = await curenergiaLogin(supabase, key);
+  await supabase.from("curenergia_sessions")
+    .upsert({ user_id: userId, ...s, updated_at: new Date().toISOString() });
+  return s;
+}
+
+/**
+ * Logs in with Curenergía account credentials. The portal authenticates with HTTP
+ * Basic and returns a jwtToken that is sent as the `auth-token` header afterwards.
+ * Curenergía blocks datacenter IPs, so this only works through Scrapfly.
+ */
+async function curenergiaLogin(supabase: any, key?: string): Promise<Sess> {
+  if (!key) throw new Error("Curenergía bloquea las conexiones desde el servidor. Configura SCRAPFLY_API_KEY para poder entrar con usuario y contraseña.");
+  const user = await getAppSecret(supabase, "CURENERGIA_USER", process.env.CURENERGIA_USER);
+  const pass = await getAppSecret(supabase, "CURENERGIA_PASS", process.env.CURENERGIA_PASS);
+  if (!user || !pass) throw new Error("CURENERGIA_USER / CURENERGIA_PASS no configuradas");
+
+  const jar = new CookieJar();
+  const basic = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
+  const res = await providerRequest({
+    url: `${BASE}/preLogin?origenLogin=19&loginLanguage=es&viewAPP=RESIDENCIALNM`,
+    method: "POST",
+    headers: {
+      authorization: basic,
+      accept: "application/json, text/plain, */*",
+      origin: "https://www.curenergia.es",
+      referer: "https://www.curenergia.es/wclifral/logincur/loginUnicoForm",
+    },
+    scrapflyKey: key,
+  });
+  jar.add(res.setCookies);
+  const jwt = res.json?.jwtToken ?? res.json?.data?.jwtToken;
+  if (!jwt) {
+    const msg = res.json?.userMessage?.[0]?.key ?? res.json?.message;
+    throw new Error(`Curenergía no aceptó las credenciales${msg ? ` (${msg})` : ""}.`);
+  }
+  return { auth_token: jwt, cookie: jar.header() };
 }
 
 function toNum(s: string | undefined): number | null {
@@ -94,14 +136,19 @@ function toNum(s: string | undefined): number | null {
 
 export const saveCurenergiaSession = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { curl: string }) => d)
+  .inputValidator((d: { curl?: string }) => d ?? {})
   .handler(async ({ data, context }) => {
+    if (!data.curl?.trim()) {
+      // Empty cURL: fall back to account credentials, drop any stale pasted session.
+      await context.supabase.from("curenergia_sessions").delete().eq("user_id", context.userId);
+      return { ok: true, mode: "credentials" as const };
+    }
     const s = parseCurl(data.curl);
     const { error } = await context.supabase
       .from("curenergia_sessions")
       .upsert({ user_id: context.userId, ...s, updated_at: new Date().toISOString() });
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, mode: "curl" as const };
   });
 
 export const syncCurenergiaInvoices = createServerFn({ method: "POST" })

@@ -1,7 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { getAppSecret } from "./app-secrets";
+import { getScrapflyKey, postForm } from "./provider-login.server";
 
 const API = "https://pro.api.carrefour.es";
+// Carrefour login is Gigya / SAP Customer Data Cloud (same API key the web app uses).
+const GIGYA_LOGIN = "https://ss-mya-p3.carrefour.es/accounts.login";
+const GIGYA_API_KEY = "3_Ns3U5-wXeiSQL-vZtu1Fd2DpWBsEdB78mYs2dn0_kyFFwwSJAZZd1EHUm9kodfND";
 
 /** Builds a receipt-style PDF from stored ticket data (fallback when Carrefour no longer keeps the PDF). */
 async function buildTicketPdf(r: any): Promise<Uint8Array> {
@@ -60,6 +65,53 @@ function headers(c: Creds): Record<string, string> {
   return h;
 }
 
+function extractCookie(setCookies: string[], name: string): string | undefined {
+  const re = new RegExp(`(?:^|[;,\\s])${name}=([^;]+)`);
+  for (const c of setCookies) { const m = c.match(re); if (m) return decodeURIComponent(m[1]); }
+  return undefined;
+}
+
+/** Logs in with Carrefour account credentials (Gigya / SAP CDC) and returns the bearer token. */
+async function carrefourLogin(supabase: any): Promise<Creds> {
+  const user = await getAppSecret(supabase, "CARREFOUR_USER", process.env.CARREFOUR_USER);
+  const pass = await getAppSecret(supabase, "CARREFOUR_PASS", process.env.CARREFOUR_PASS);
+  if (!user || !pass) throw new Error("CARREFOUR_USER / CARREFOUR_PASS no configuradas");
+  const key = await getScrapflyKey(supabase, process.env.SCRAPFLY_API_KEY);
+  const r = await postForm({
+    url: GIGYA_LOGIN,
+    scrapflyKey: key,
+    headers: { origin: "https://www.carrefour.es", referer: "https://www.carrefour.es/" },
+    fields: {
+      loginID: user,
+      password: pass,
+      sessionExpiration: "-1",
+      targetEnv: "jssdk",
+      include: "profile,data,emails,subscriptions,preferences,",
+      includeUserInfo: "true",
+      loginMode: "standard",
+      lang: "es",
+      APIKey: GIGYA_API_KEY,
+      source: "showScreenSet",
+      sdk: "js_latest",
+      authMode: "cookie",
+      pageURL: "https://www.carrefour.es/access",
+      sdkBuild: "2491",
+      format: "json",
+    },
+  });
+  const j = r.json ?? {};
+  if (j.errorCode) throw new Error(`Carrefour login: ${j.errorMessage ?? j.errorDetails ?? j.errorCode}`);
+  const token = j.id_token ?? j.idToken ?? j.sessionInfo?.sessionToken ?? null;
+  if (!token) throw new Error("Carrefour login: la respuesta no trae token");
+  return { token, csrf: extractCookie(r.setCookies, "XSRF-TOKEN") };
+}
+
+/** Uses the pasted cURL when given, otherwise logs in with the stored credentials. */
+async function resolveCreds(supabase: any, curl?: string): Promise<Creds> {
+  if (curl?.trim()) return parseCreds(curl);
+  return carrefourLogin(supabase);
+}
+
 async function cfGet(path: string, c: Creds) {
   const res = await fetch(API + path, { headers: headers(c) });
   if (res.status === 401) throw new Error("La sesión de Carrefour ha caducado. Vuelve a copiar la petición desde Carrefour.");
@@ -68,13 +120,10 @@ async function cfGet(path: string, c: Creds) {
 
 export const syncCarrefourTickets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { curl: string; years?: number }) => {
-    if (!d?.curl) throw new Error("Falta el texto copiado de Carrefour");
-    return d;
-  })
+  .inputValidator((d: { curl?: string; years?: number }) => d ?? {})
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const c = parseCreds(data.curl);
+    const c = await resolveCreds(supabase, data.curl);
     const to = new Date(Date.now() + 86400000).toISOString();
     const from = new Date(Date.now() - (data.years ?? 3) * 365 * 86400000).toISOString();
 
@@ -132,13 +181,13 @@ export const syncCarrefourTickets = createServerFn({ method: "POST" })
 
 export const downloadCarrefourTicket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { id: string; curl: string }) => {
-    if (!d?.id || !d?.curl) throw new Error("Faltan datos");
+  .inputValidator((d: { id: string; curl?: string }) => {
+    if (!d?.id) throw new Error("Faltan datos");
     return d;
   })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const c = parseCreds(data.curl);
+    const c = await resolveCreds(supabase, data.curl);
     const { data: row, error } = await supabase.from("carrefour_tickets" as any).select("*").eq("id", data.id).single();
     if (error || !row) throw new Error(error?.message ?? "Ticket no encontrado");
     const r: any = row;

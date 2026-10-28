@@ -52,14 +52,12 @@ export function CarrefourPanel() {
   }
   useEffect(() => { load(); }, []);
 
-  const needCurl = () => { if (!curl.trim()) throw new Error("Pega primero la petición copiada de Carrefour"); };
-  const dl = async (id: string) => _dl({ data: { id, curl }, headers: await authHeaders() } as any);
+  const dl = async (id: string) => _dl({ data: { id, curl: curl.trim() || undefined }, headers: await authHeaders() } as any);
 
   async function handleSync() {
     setSyncing(true);
     try {
-      needCurl();
-      const r = await _sync({ data: { curl }, headers: await authHeaders() } as any);
+      const r = await _sync({ data: { curl: curl.trim() || undefined }, headers: await authHeaders() } as any);
       toast.success(`${r.count} compras · ${r.nuevos} nuevas`);
       await load();
     } catch (e: any) { toast.error(e?.message ?? "Error al sincronizar"); }
@@ -74,7 +72,6 @@ export function CarrefourPanel() {
         const u = await _url({ data: { path: r.pdf_storage_path }, headers: await authHeaders() } as any);
         await openPdf(u.url, name);
       } else {
-        needCurl();
         await openPdf((await dl(r.id)).url, name);
         await load();
       }
@@ -83,7 +80,6 @@ export function CarrefourPanel() {
   }
 
   async function handleAll() {
-    try { needCurl(); } catch (e: any) { return toast.error(e.message); }
     const pending = rows.filter((r) => !r.pdf_storage_path);
     if (!pending.length) return toast.info("Todos los tickets ya están descargados");
     setBulk(true);
@@ -139,13 +135,14 @@ export function CarrefourPanel() {
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle className="text-base">Conectar con tu sesión de Carrefour</CardTitle>
+          <CardTitle className="text-base">Conectar con tu cuenta de Carrefour</CardTitle>
           <CardDescription>
-            Entra en carrefour.es → Mis compras, abre F12 → Red, recarga, clic derecho en "purchases" → Copiar como cURL y pégalo aquí. Vale unos 30 minutos.
+            Lo más cómodo: guarda <code>CARREFOUR_USER</code> y <code>CARREFOUR_PASS</code> en <code>app_secrets</code> y la app inicia sesión sola.
+            Si prefieres no guardar la contraseña, entra en carrefour.es → Mis compras, F12 → Red, clic derecho en "purchases" → Copiar como cURL y pégalo aquí (vale ~30 min).
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea rows={3} value={curl} onChange={(e) => setCurl(e.target.value)} placeholder="curl 'https://pro.api.carrefour.es/...' -H 'authorization: bearer ...'" />
+          <Textarea rows={3} value={curl} onChange={(e) => setCurl(e.target.value)} placeholder="Opcional: pega aquí el cURL. Déjalo vacío para usar CARREFOUR_USER / CARREFOUR_PASS." />
         </CardContent>
       </Card>
 

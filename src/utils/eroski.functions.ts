@@ -1,8 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { parseEroskiToken, parseEroskiItems } from "./eroski-parse";
+import { getAppSecret } from "./app-secrets";
+import { CookieJar } from "./cookie-jar.server";
+import { eroskiEncrypt } from "./eroski-crypto";
 
 const API = "https://areacliente.eroski.es/areacliente/rest/compras/tickets/es";
+const LOGIN_PAGE = "https://areacliente.eroski.es/areacliente/es/nlrLogin";
+const LOGIN_POST = "https://areacliente.eroski.es/areacliente/es/nlr/login";
+const TOKEN_POST = "https://areacliente.eroski.es/areacliente/security/get/token";
 
 function headers(token: string, json = true): Record<string, string> {
   return {
@@ -17,6 +23,76 @@ function headers(token: string, json = true): Record<string, string> {
 const expired = (s: number) => s === 401 || s === 403;
 const EXP = "La sesión de Eroski ha caducado. Vuelve a copiar la petición desde Eroski.";
 
+const UA_LOGIN =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+
+/** Logs in with Eroski account credentials and returns the x-auth-token used by the API. */
+async function eroskiLogin(supabase: any): Promise<string> {
+  const user = await getAppSecret(supabase, "EROSKI_USER", process.env.EROSKI_USER);
+  const pass = await getAppSecret(supabase, "EROSKI_PASS", process.env.EROSKI_PASS);
+  if (!user || !pass) throw new Error("EROSKI_USER / EROSKI_PASS no configuradas");
+
+  const jar = new CookieJar();
+  const page = await fetch(LOGIN_PAGE, { headers: { "user-agent": UA_LOGIN, accept: "text/html" } });
+  jar.add((page.headers as any).getSetCookie?.());
+  await page.body?.cancel();
+
+  const body = new URLSearchParams({
+    email: await eroskiEncrypt(user),
+    password: await eroskiEncrypt(pass),
+    returnToUrl: "/es/home",
+    fromApp: "web",
+    isRelogin: "false",
+    recuerdame: "1",
+    forceTEC: "false",
+    honeypot: "",
+    ip: "",
+  });
+  const res = await fetch(LOGIN_POST, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "x-requested-with": "XMLHttpRequest",
+      origin: "https://areacliente.eroski.es",
+      referer: LOGIN_PAGE,
+      cookie: jar.header(),
+      "user-agent": UA_LOGIN,
+    },
+    body,
+  });
+  jar.add((res.headers as any).getSetCookie?.());
+  const j: any = await res.json().catch(() => ({}));
+  if (j?.hayError !== false && j?.hayError != null) {
+    if (String(j.codigo) === "30") throw new Error("Eroski pide verificación por SMS: entra una vez en la web para validar el dispositivo.");
+    throw new Error(`Eroski login: ${String(j.mensaje ?? "").replace(/<[^>]+>/g, "") || `código ${j.codigo}`}`);
+  }
+
+  const params = new URLSearchParams((j.redireccion ?? "").split("?")[1] ?? "");
+  const payload: Record<string, string> = {};
+  params.forEach((v, k) => { payload[k] = v; });
+  const tok = await fetch(TOKEN_POST, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/plain, */*",
+      origin: "https://areacliente.eroski.es",
+      referer: LOGIN_PAGE,
+      cookie: jar.header(),
+      "user-agent": UA_LOGIN,
+    },
+    body: JSON.stringify(payload),
+  });
+  const tj: any = await tok.json().catch(() => null);
+  const token = typeof tj?.data === "string" ? tj.data : tj?.data?.token ?? tj?.token;
+  if (!token) throw new Error("Eroski login: no se obtuvo el token de sesión");
+  return token;
+}
+
+async function resolveEroskiToken(supabase: any, curl?: string): Promise<string> {
+  return curl?.trim() ? parseEroskiToken(curl) : eroskiLogin(supabase);
+}
+
 /** dd/mm/yyyy -> yyyy-mm-dd */
 const isoDay = (f: string | null | undefined) => {
   const m = f?.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -25,10 +101,10 @@ const isoDay = (f: string | null | undefined) => {
 
 export const syncEroskiTickets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { curl: string }) => { if (!d?.curl) throw new Error("Falta el texto copiado de Eroski"); return d; })
+  .inputValidator((d: { curl?: string }) => d ?? {})
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const token = parseEroskiToken(data.curl);
+    const token = await resolveEroskiToken(supabase, data.curl);
     const now = new Date();
     const toDate = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
     const all: any[] = [];
@@ -65,10 +141,10 @@ export const syncEroskiTickets = createServerFn({ method: "POST" })
 
 export const downloadEroskiTicket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { id: string; curl: string }) => { if (!d?.id || !d?.curl) throw new Error("Faltan datos"); return d; })
+  .inputValidator((d: { id: string; curl?: string }) => { if (!d?.id) throw new Error("Faltan datos"); return d; })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const token = parseEroskiToken(data.curl);
+    const token = await resolveEroskiToken(supabase, data.curl);
     const { data: row, error } = await supabase.from("eroski_tickets" as any).select("*").eq("id", data.id).single();
     if (error || !row) throw new Error(error?.message ?? "Ticket no encontrado");
     const r: any = row;
